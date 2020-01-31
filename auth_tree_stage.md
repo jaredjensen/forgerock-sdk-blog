@@ -6,18 +6,20 @@ OpenAM 7.0 introduces a "stage" property to authentication trees that makes it e
 
 ## Using Stage in OpenAM 7.0
 
-When constructing a tree, you can place nodes inside a Page Node and then specify its "Stage", which is a free-form text field.
+When constructing a tree, you can place nodes inside a page node and then specify its "stage", which is a free-form text field.
 
 ![Stage property in OpenAM 7.0 trees](img/am7_editor_stage.png)
 
-When you use the SDK's `FRAuth` module to iterate through a tree, you can now use the `getStage()` method on the returned `FRStep` object to determine what custom UI to render:
+When you use the SDK's `FRAuth` module to iterate through a tree, you can now use the `getStage()` method on the returned `FRStep` object to determine what custom UI is required:
 
 ```ts
-const thisStep = await FRAuth.next(previousStep);
+// Get the current step in the tree
+const currentStep = await FRAuth.next(previousStep);
 
-switch (thisStep.getStage()) {
+// Use the stage value configured in the tree
+switch (currentStep.getStage()) {
   case "UsernamePassword":
-    // Render your username/password UI
+    // Render your custom username/password UI
     break;
   case "AnotherStage":
     // etc
@@ -27,13 +29,13 @@ switch (thisStep.getStage()) {
 
 ## Alternative Approaches for OpenAM 6.5
 
-Prior to OpenAM 7.0, the "stage" property did not exist in authentication trees. Instead, there are two other possible approaches you can use.
+Prior to OpenAM 7.0, the "stage" property did not exist in authentication trees. Here we'll present two other approaches to achieve the same result.
 
 ### Approach #1: Metadata Callbacks
 
-Using a metadata callback, you can inject the "stage" value into the tree payload. The only difference is that the value will appear in a callback, instead of directly associated with the step itself.
+Using metadata callbacks, you can inject the "stage" value into the tree's response payload. The only difference is that the value will appear in a callback, instead of directly associated with the step itself.
 
-This approach involves:
+To specify "stage" using metadata callbacks:
 
 1. Create a script to add the metadata callback
 1. Update your tree to execute that script
@@ -58,9 +60,11 @@ with (fr) {
 outcome = "true";
 ```
 
+As with any script, ensure you have whitelisted any imported classes.
+
 #### Step 2: Update your Tree to Execute Script
 
-Add a Scripted Decision Node to your Page Node, and configure it to reference the script created in the previous step. In this example, the step will contain three callbacks:
+Add a scripted decision node to your page node and configure it to reference the script created in the previous step. In this example, the step payload will contain three callbacks:
 
 - MetadataCallback
 - NameCallback
@@ -75,7 +79,7 @@ Now use the SDK to find the metadata callback and read its "stage" property.
 ```js
 function getStage(step) {
   // Get all metadata callbacks in the step
-  const metadataCallbacks = step.getCallbacksOfType("MetadataCallback");
+  const metadataCallbacks = step.getCallbacksOfType(CallbackType.MetadataCallback);
 
   // Find the first callback that contains a "stage" value in its data
   const stage = metadataCallbacks
@@ -93,94 +97,29 @@ function getStage(step) {
 
 ### Approach #2: Inspecting Callbacks
 
-## Determining Stage of Authentication
+If you have relatively few and/or well-known authentication trees, it's likely you can determine the "stage" by simply looking at the types of callbacks present in the step.
 
-```ts
-// stage.ts
+For example, it's common for a tree to start by capturing username and password. In this case, you can inspect the callbacks to see if they consist of a NameCallback and PasswordCallback. If your tree uses WebAuthn for passwordless authentication, the SDK can help with this inspection.
 
-import {
-  CallbackType,
-  FRStep,
-  FRWebAuthn,
-  MetadataCallback,
-  WebAuthnStepType
-} from "@forgerock/javascript-sdk";
-
-// Stages used by your application
-enum Stage {
-  DeviceAuthentication = "DeviceAuthentication",
-  DeviceRegistration = "DeviceRegistration",
-  Password = "Password",
-  PasswordlessChoice = "PasswordlessChoice",
-  Username = "Username",
-  UsernamePassword = "UsernamePassword",
-  Unknown = "Unknown"
-}
-
-// Defines the shape of a metadata callback used for defining "stage"
-interface MetadataCallbackStage {
-  stage: Stage;
-}
-
-// Progressively attempts to determine "stage" with three different approaches.
-// In your application, you'd likely use only one of these approaches.
-function getStage(step: FRStep): Stage {
-  // Approach #1
-  // AM 7.0 users can leverage the page node "stage" property.
-  if (step.getStage()) {
-    return step.getStage() as Stage;
-  }
-
-  // Approach #2
-  // AM 6.5 users can use a metadata callback to specify "stage".
-  const metadataCallbacks = step.getCallbacksOfType<MetadataCallback>(
-    CallbackType.MetadataCallback
-  );
-  if (metadataCallbacks.length > 0) {
-    const metadataStage = getStageFromCallback(metadataCallbacks[0]);
-    if (metadataStage !== Stage.Unknown) {
-      return metadataStage;
-    }
-  }
-
-  // Approach #3
-  // Inspect the callbacks present to determine "stage".
-  const choiceCallbacks = step.getCallbacksOfType(CallbackType.ChoiceCallback);
-  const usernameCallbacks = [
-    ...step.getCallbacksOfType(CallbackType.ValidatedCreateUsernameCallback),
-    ...step.getCallbacksOfType(CallbackType.NameCallback)
-  ];
-  const passwordCallbacks = [
-    ...step.getCallbacksOfType(CallbackType.ValidatedCreatePasswordCallback),
-    ...step.getCallbacksOfType(CallbackType.PasswordCallback)
-  ];
+```js
+function getStage(step) {
+  // Check if the step contains callbacks for capturing username and password
+  const usernameCallbacks = step.getCallbacksOfType(CallbackType.NameCallback);
+  const passwordCallbacks = step.getCallbacksOfType(CallbackType.PasswordCallback);
   if (usernameCallbacks.length > 0 && passwordCallbacks.length > 0) {
-    return Stage.UsernamePassword;
-  } else if (usernameCallbacks.length > 0) {
-    return Stage.Username;
-  } else if (passwordCallbacks.length > 0) {
-    return Stage.Password;
-  } else if (choiceCallbacks.length > 0) {
-    return Stage.PasswordlessChoice;
-  } else if (metadataCallbacks.length > 0) {
-    const webAuthnStepType = FRWebAuthn.getWebAuthnStepType(step);
-    if (webAuthnStepType === WebAuthnStepType.Authentication) {
-      return Stage.DeviceAuthentication;
-    } else if (webAuthnStepType === WebAuthnStepType.Registration) {
-      return Stage.DeviceRegistration;
-    }
+    return "UsernamePassword";
   }
 
-  return Stage.Unknown;
-}
+  // Use the SDK to determine if this is a WebAuthn step
+  const webAuthnStepType = FRWebAuthn.getWebAuthnStepType(step);
+  if (webAuthnStepType === WebAuthnStepType.Authentication) {
+    return "DeviceAuthentication";
+  } else if (webAuthnStepType === WebAuthnStepType.Registration) {
+    return "DeviceRegistration";
+  }
 
-function getStageFromCallback(callback: MetadataCallback): Stage {
-  const value = callback.getOutputValue("data");
-  const valueIsObject = typeof value === "object" && value !== null;
-  const valueIsStage =
-    valueIsObject && Object.getOwnPropertyNames(value).indexOf("stage") !== -1;
-  return valueIsStage ? (value as MetadataCallbackStage).stage : Stage.Unknown;
-}
+  // ... Add checks to determine other stages in your trees ...
 
-export { getStage, Stage };
+  return undefined;
+}
 ```
